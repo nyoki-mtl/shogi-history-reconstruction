@@ -1,0 +1,990 @@
+diff --git a/posdiffusion_returnable.cpp b/posdiffusion_returnable.cpp
+new file mode 100644
+index 00000000..a1ff1aca
+--- /dev/null
++++ b/posdiffusion_returnable.cpp
+@@ -0,0 +1,754 @@
++// C API for returnable checks using YaneuraOu move generation.
++
++#include <algorithm>
++#include <array>
++#include <cstdint>
++#include <cstring>
++#include <sstream>
++#include <string>
++#include <unordered_set>
++#include <vector>
++
++#include "source/bitboard.h"
++#include "source/evaluate.h"
++#include "source/movegen.h"
++#include "source/position.h"
++#include "source/types.h"
++
++using namespace YaneuraOu;
++
++namespace YaneuraOu {
++namespace USIEngine {
++
++std::string move(Move16) { return ""; }
++std::string move(Move) { return ""; }
++std::string move(Move, bool) { return ""; }
++std::string move(const std::vector<Move>&) { return ""; }
++
++}  // namespace USIEngine
++}  // namespace YaneuraOu
++
++namespace {
++
++constexpr int kBoardSize = 81;
++constexpr int kHandSize = 14;
++constexpr int kTotalTokens = 96;
++constexpr int kHandOffset = 31;
++constexpr int kMaxPawnInHand = 8;
++constexpr int kTurnBlack = 0;
++constexpr int kTurnWhite = 1;
++
++const char* kPieceSymbols[] = {
++    "", "p", "l", "n", "s", "b", "r", "g", "k", "+p", "+l", "+n", "+s", "+b", "+r",
++};
++
++const char kHandSymbols[] = {'p', 'l', 'n', 's', 'g', 'b', 'r'};
++const int kBlackUnpromoted[] = {1, 2, 3, 4, 7, 5, 6};
++const int kWhiteUnpromoted[] = {17, 18, 19, 20, 23, 21, 22};
++const int kBlackCapturable[] = {1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14};
++const int kWhiteCapturable[] = {17, 18, 19, 20, 21, 22, 23, 25, 26, 27, 28, 29, 30};
++
++struct CandidateDraft {
++    std::array<int, kTotalTokens> tokens;
++    int kind;
++    int from_square;
++    int to_square;
++    int moved_piece;
++    int captured_piece;
++    uint8_t promoted;
++};
++
++std::string piece_to_sfen(int piece_id) {
++    if (piece_id == 0) {
++        return "";
++    }
++    int piece_type = piece_id % 16;
++    if (piece_type == 15 || piece_type < 0 || piece_type >= 15) {
++        return "";
++    }
++    std::string sym = kPieceSymbols[piece_type];
++    bool is_white = piece_id >= 16;
++    if (is_white) {
++        return sym;
++    }
++    if (!sym.empty() && sym[0] == '+') {
++        char promoted = static_cast<char>(std::toupper(sym[1]));
++        return std::string("+") + promoted;
++    }
++    return std::string(1, static_cast<char>(std::toupper(sym[0])));
++}
++
++int hand_token_to_num(int token) {
++    int num = token - kHandOffset;
++    if (num < 0) {
++        return 0;
++    }
++    if (num > kMaxPawnInHand) {
++        return kMaxPawnInHand;
++    }
++    return num;
++}
++
++int num_to_hand_token(int num) {
++    if (num < 0) {
++        num = 0;
++    }
++    if (num > kMaxPawnInHand) {
++        num = kMaxPawnInHand;
++    }
++    return kHandOffset + num;
++}
++
++int color_of_piece_id(int piece_id) {
++    if (piece_id >= 1 && piece_id <= 14) {
++        return 0;
++    }
++    if (piece_id >= 17 && piece_id <= 30) {
++        return 1;
++    }
++    return -1;
++}
++
++int opposite_color_id(int color) {
++    return color == 0 ? 1 : 0;
++}
++
++int turn_token_for_color_id(int color) {
++    return color == 0 ? kTurnBlack : kTurnWhite;
++}
++
++int mover_color_from_successor(const int* tokens) {
++    int successor_color = tokens[kBoardSize + kHandSize] == kTurnBlack ? 0 : 1;
++    return opposite_color_id(successor_color);
++}
++
++int hand_index(int color, int hand_type) {
++    return kBoardSize + (color == 0 ? hand_type : 7 + hand_type);
++}
++
++int hand_count(const std::array<int, kTotalTokens>& tokens, int color, int hand_type) {
++    return hand_token_to_num(tokens[hand_index(color, hand_type)]);
++}
++
++void set_hand_count(std::array<int, kTotalTokens>& tokens, int color, int hand_type, int count) {
++    tokens[hand_index(color, hand_type)] = num_to_hand_token(count);
++}
++
++int hand_type_by_base(int base_piece) {
++    switch (base_piece) {
++        case 1:
++        case 17:
++            return 0;
++        case 2:
++        case 18:
++            return 1;
++        case 3:
++        case 19:
++            return 2;
++        case 4:
++        case 20:
++            return 3;
++        case 7:
++        case 23:
++            return 4;
++        case 5:
++        case 21:
++            return 5;
++        case 6:
++        case 22:
++            return 6;
++        default:
++            return -1;
++    }
++}
++
++bool decrement_hand(std::array<int, kTotalTokens>& tokens, int color, int base_piece) {
++    int hand_type = hand_type_by_base(base_piece);
++    if (hand_type < 0) {
++        return false;
++    }
++    int count = hand_count(tokens, color, hand_type);
++    if (count <= 0) {
++        return false;
++    }
++    set_hand_count(tokens, color, hand_type, count - 1);
++    return true;
++}
++
++bool increment_hand(std::array<int, kTotalTokens>& tokens, int color, int base_piece) {
++    int hand_type = hand_type_by_base(base_piece);
++    if (hand_type < 0) {
++        return false;
++    }
++    set_hand_count(tokens, color, hand_type, hand_count(tokens, color, hand_type) + 1);
++    return true;
++}
++
++int demote_piece_id(int piece) {
++    switch (piece) {
++        case 9:
++            return 1;
++        case 10:
++            return 2;
++        case 11:
++            return 3;
++        case 12:
++            return 4;
++        case 13:
++            return 5;
++        case 14:
++            return 6;
++        case 25:
++            return 17;
++        case 26:
++            return 18;
++        case 27:
++            return 19;
++        case 28:
++            return 20;
++        case 29:
++            return 21;
++        case 30:
++            return 22;
++        default:
++            return piece;
++    }
++}
++
++int unpromote_piece_id(int piece) {
++    return demote_piece_id(piece) == piece ? 0 : demote_piece_id(piece);
++}
++
++std::array<int, kTotalTokens> tokens_to_array(const int* tokens) {
++    std::array<int, kTotalTokens> out;
++    for (int i = 0; i < kTotalTokens; ++i) {
++        out[i] = tokens[i];
++    }
++    return out;
++}
++
++std::string token_key(const std::array<int, kTotalTokens>& tokens) {
++    return std::string(reinterpret_cast<const char*>(tokens.data()), sizeof(int) * tokens.size());
++}
++
++std::string tokens_to_sfen(const int* tokens) {
++    std::ostringstream ss;
++    for (int rank = 0; rank < 9; ++rank) {
++        int empty = 0;
++        for (int file = 8; file >= 0; --file) {
++            int idx = file * 9 + rank;
++            int piece_id = tokens[idx];
++            int piece_type = piece_id % 16;
++            if (piece_id == 0 || piece_type == 15 || piece_type < 0 || piece_type >= 15) {
++                ++empty;
++                continue;
++            }
++            if (empty > 0) {
++                ss << empty;
++                empty = 0;
++            }
++            ss << piece_to_sfen(piece_id);
++        }
++        if (empty > 0) {
++            ss << empty;
++        }
++        if (rank < 8) {
++            ss << "/";
++        }
++    }
++
++    int turn_token = tokens[kBoardSize + kHandSize];
++    char turn = (turn_token == 0) ? 'b' : 'w';
++    ss << " " << turn << " ";
++
++    std::string hand;
++    for (int side = 0; side < 2; ++side) {
++        int base = kBoardSize + side * 7;
++        for (int i = 6; i >= 0; --i) {
++            int count = hand_token_to_num(tokens[base + i]);
++            if (count <= 0) {
++                continue;
++            }
++            if (count > 1) {
++                hand += std::to_string(count);
++            }
++            char sym = kHandSymbols[i];
++            hand += (side == 0) ? static_cast<char>(std::toupper(sym)) : sym;
++        }
++    }
++    if (hand.empty()) {
++        hand = "-";
++    }
++    ss << hand << " 1";
++    return ss.str();
++}
++
++std::string sfen_core(const std::string& sfen) {
++    std::istringstream ss(sfen);
++    std::string board;
++    std::string turn;
++    std::string hand;
++    ss >> board >> turn >> hand;
++    return board + " " + turn + " " + hand;
++}
++
++bool has_double_pawn(const int* tokens, int color) {
++    for (int file = 0; file < 9; ++file) {
++        bool seen = false;
++        for (int rank = 0; rank < 9; ++rank) {
++            int piece_id = tokens[file * 9 + rank];
++            int piece_type = piece_id % 16;
++            if (piece_type != 1) {
++                continue;
++            }
++            bool is_white = piece_id >= 16;
++            if ((color == 1) != is_white) {
++                continue;
++            }
++            if (seen) {
++                return true;
++            }
++            seen = true;
++        }
++    }
++    return false;
++}
++
++bool has_dead_piece(const int* tokens, int color) {
++    for (int file = 0; file < 9; ++file) {
++        for (int rank = 0; rank < 9; ++rank) {
++            int piece_id = tokens[file * 9 + rank];
++            int piece_type = piece_id % 16;
++            if (piece_id == 0 || piece_type == 15) {
++                continue;
++            }
++            bool is_white = piece_id >= 16;
++            if ((color == 1) != is_white) {
++                continue;
++            }
++            if (color == 0) {
++                if ((piece_type == 1 || piece_type == 2 || piece_type == 3) && rank == 0) {
++                    return true;
++                }
++                if (piece_type == 3 && rank == 1) {
++                    return true;
++                }
++            } else {
++                if (piece_type == 3 && rank == 7) {
++                    return true;
++                }
++                if ((piece_type == 1 || piece_type == 2 || piece_type == 3) && rank == 8) {
++                    return true;
++                }
++            }
++        }
++    }
++    return false;
++}
++
++int diff_count(const int* prev, const int* curr) {
++    int board_diff = 0;
++    for (int idx = 0; idx < kBoardSize; ++idx) {
++        if (prev[idx] != curr[idx]) {
++            ++board_diff;
++        }
++    }
++    int hand_diff = 0;
++    for (int idx = 0; idx < kHandSize; ++idx) {
++        int prev_num = hand_token_to_num(prev[kBoardSize + idx]);
++        int curr_num = hand_token_to_num(curr[kBoardSize + idx]);
++        hand_diff += std::abs(prev_num - curr_num);
++    }
++    return board_diff + hand_diff;
++}
++
++bool valid_position(const int* tokens) {
++    int piece_totals[7] = {0, 0, 0, 0, 0, 0, 0};  // pawn,lance,knight,silver,gold,bishop,rook
++    int type_to_index[8] = {-1, 0, 1, 2, 3, 5, 6, 4};  // base_type -> index
++    int black_king = 0;
++    int white_king = 0;
++
++    for (int idx = 0; idx < kBoardSize; ++idx) {
++        int piece_id = tokens[idx];
++        if (piece_id == 0) {
++            continue;
++        }
++        int piece_type = piece_id % 16;
++        if (piece_type == 15 || piece_type < 0 || piece_type >= 15) {
++            return false;
++        }
++        if (piece_type == 8) {
++            if (piece_id >= 16) {
++                ++white_king;
++            } else {
++                ++black_king;
++            }
++            continue;
++        }
++        int base_type = piece_type;
++        if (piece_type >= 9) {
++            base_type = piece_type - 8;
++        }
++        int idx_type = type_to_index[base_type];
++        if (idx_type < 0 || idx_type >= 7) {
++            return false;
++        }
++        ++piece_totals[idx_type];
++    }
++
++    int hand_counts[2][7] = {};
++    for (int side = 0; side < 2; ++side) {
++        int base = kBoardSize + side * 7;
++        for (int i = 0; i < 7; ++i) {
++            int count = hand_token_to_num(tokens[base + i]);
++            hand_counts[side][i] = count;
++            piece_totals[i] += count;
++        }
++    }
++
++    if (black_king != 1 || white_king != 1) {
++        return false;
++    }
++
++    const int expected[7] = {18, 4, 4, 4, 4, 2, 2};
++    bool has_max_hand_pawns =
++        hand_counts[0][0] == kMaxPawnInHand || hand_counts[1][0] == kMaxPawnInHand;
++    for (int i = 0; i < 7; ++i) {
++        int actual = piece_totals[i];
++        if (i == 0 && has_max_hand_pawns) {
++            if (actual < expected[i] - 1) {
++                return false;
++            }
++        } else if (actual != expected[i]) {
++            return false;
++        }
++    }
++    return true;
++}
++
++bool light_checks(const int* prev, const int* curr) {
++    if (!valid_position(prev)) {
++        return false;
++    }
++    if (has_double_pawn(prev, 0) || has_double_pawn(prev, 1)) {
++        return false;
++    }
++    if (has_dead_piece(prev, 0) || has_dead_piece(prev, 1)) {
++        return false;
++    }
++    int diff = diff_count(prev, curr);
++    return diff == 2 || diff == 3;
++}
++
++bool inactive_king_is_attacked(const Position& pos) {
++    Color us = pos.side_to_move();
++    Color them = ~us;
++    return static_cast<bool>(pos.attackers_to(us, pos.square<KING>(them)));
++}
++
++std::string square_to_usi(Square sq) {
++    char file_char = static_cast<char>('1' + file_of(sq));
++    char rank_char = static_cast<char>('a' + rank_of(sq));
++    std::string out;
++    out.reserve(2);
++    out.push_back(file_char);
++    out.push_back(rank_char);
++    return out;
++}
++
++std::string move_to_usi(Move mv) {
++    if (mv.is_drop()) {
++        constexpr char piece_chars[] = {'?', 'P', 'L', 'N', 'S', 'B', 'R', 'G', 'K'};
++        char piece_char = piece_chars[mv.move_dropped_piece()];
++        std::string out;
++        out.reserve(4);
++        out.push_back(piece_char);
++        out.push_back('*');
++        out += square_to_usi(mv.to_sq());
++        return out;
++    }
++    std::string out = square_to_usi(mv.from_sq());
++    out += square_to_usi(mv.to_sq());
++    if (mv.is_promote()) {
++        out.push_back('+');
++    }
++    return out;
++}
++
++bool find_returnable_move(
++    const int* prev_tokens,
++    const int* curr_tokens,
++    bool use_light,
++    std::string* move_out
++) {
++    if (use_light && !light_checks(prev_tokens, curr_tokens)) {
++        return false;
++    }
++
++    std::string prev_sfen = tokens_to_sfen(prev_tokens);
++    std::string curr_sfen = tokens_to_sfen(curr_tokens);
++
++    Position prev_pos;
++    StateInfo prev_st;
++    prev_pos.set(prev_sfen, &prev_st);
++
++    if (use_light && inactive_king_is_attacked(prev_pos)) {
++        return false;
++    }
++
++    Position curr_pos;
++    StateInfo curr_st;
++    curr_pos.set(curr_sfen, &curr_st);
++
++    for (const auto& mv : MoveList<LEGAL_ALL>(prev_pos)) {
++        StateInfo next_st;
++        prev_pos.do_move(mv, next_st);
++        bool same = prev_pos.side_to_move() == curr_pos.side_to_move();
++        if (same) {
++            for (auto sq : SQ) {
++                if (prev_pos.piece_on(sq) != curr_pos.piece_on(sq)) {
++                    same = false;
++                    break;
++                }
++            }
++        }
++        if (same) {
++            for (auto c : COLOR) {
++                if (prev_pos.hand_of(c) != curr_pos.hand_of(c)) {
++                    same = false;
++                    break;
++                }
++            }
++        }
++        if (same) {
++            if (move_out) {
++                *move_out = move_to_usi(mv);
++            }
++            prev_pos.undo_move(mv);
++            return true;
++        }
++        prev_pos.undo_move(mv);
++    }
++    return false;
++}
++
++void try_add_draft(
++    std::vector<CandidateDraft>& drafts,
++    std::unordered_set<std::string>& seen,
++    const std::array<int, kTotalTokens>& tokens,
++    int kind,
++    int from_square,
++    int to_square,
++    int moved_piece,
++    int captured_piece,
++    bool promoted
++) {
++    std::string key = token_key(tokens);
++    if (seen.find(key) != seen.end()) {
++        return;
++    }
++    seen.insert(std::move(key));
++    drafts.push_back(CandidateDraft{
++        tokens,
++        kind,
++        from_square,
++        to_square,
++        moved_piece,
++        captured_piece,
++        static_cast<uint8_t>(promoted ? 1 : 0),
++    });
++}
++
++std::vector<CandidateDraft> enumerate_predecessor_drafts(const int* successor_tokens) {
++    std::array<int, kTotalTokens> base = tokens_to_array(successor_tokens);
++    int mover_color = mover_color_from_successor(successor_tokens);
++    int opponent_color = opposite_color_id(mover_color);
++
++    std::vector<CandidateDraft> drafts;
++    std::unordered_set<std::string> seen;
++    std::vector<int> empty_squares;
++    for (int idx = 0; idx < kBoardSize; ++idx) {
++        int piece = base[idx];
++        int piece_type = piece % 16;
++        if (piece == 0 || piece_type == 15) {
++            empty_squares.push_back(idx);
++        }
++    }
++
++    const int* capturable = opponent_color == 0 ? kBlackCapturable : kWhiteCapturable;
++    int capturable_count = opponent_color == 0
++        ? static_cast<int>(sizeof(kBlackCapturable) / sizeof(kBlackCapturable[0]))
++        : static_cast<int>(sizeof(kWhiteCapturable) / sizeof(kWhiteCapturable[0]));
++
++    for (int dst = 0; dst < kBoardSize; ++dst) {
++        int successor_piece = base[dst];
++        if (color_of_piece_id(successor_piece) != mover_color) {
++            continue;
++        }
++
++        int moved_pieces[2] = {successor_piece, 0};
++        int unpromoted = unpromote_piece_id(successor_piece);
++        int moved_piece_count = 1;
++        if (unpromoted != 0) {
++            moved_pieces[1] = unpromoted;
++            moved_piece_count = 2;
++        }
++
++        for (int src : empty_squares) {
++            if (src == dst) {
++                continue;
++            }
++            for (int moved_idx = 0; moved_idx < moved_piece_count; ++moved_idx) {
++                int moved_piece = moved_pieces[moved_idx];
++                bool promoted = moved_piece != successor_piece;
++
++                std::array<int, kTotalTokens> no_capture = base;
++                no_capture[kBoardSize + kHandSize] = turn_token_for_color_id(mover_color);
++                no_capture[src] = moved_piece;
++                no_capture[dst] = 0;
++                try_add_draft(drafts, seen, no_capture, 0, src, dst, moved_piece, -1, promoted);
++
++                for (int idx = 0; idx < capturable_count; ++idx) {
++                    int captured_piece = capturable[idx];
++                    std::array<int, kTotalTokens> capture = base;
++                    capture[kBoardSize + kHandSize] = turn_token_for_color_id(mover_color);
++                    capture[src] = moved_piece;
++                    capture[dst] = captured_piece;
++                    if (!decrement_hand(capture, mover_color, demote_piece_id(captured_piece))) {
++                        continue;
++                    }
++                    try_add_draft(drafts, seen, capture, 0, src, dst, moved_piece, captured_piece, promoted);
++                }
++            }
++        }
++
++        bool is_drop_piece = false;
++        const int* drop_pieces = mover_color == 0 ? kBlackUnpromoted : kWhiteUnpromoted;
++        int drop_piece_count = mover_color == 0
++            ? static_cast<int>(sizeof(kBlackUnpromoted) / sizeof(kBlackUnpromoted[0]))
++            : static_cast<int>(sizeof(kWhiteUnpromoted) / sizeof(kWhiteUnpromoted[0]));
++        for (int idx = 0; idx < drop_piece_count; ++idx) {
++            if (successor_piece == drop_pieces[idx]) {
++                is_drop_piece = true;
++                break;
++            }
++        }
++        if (is_drop_piece) {
++            std::array<int, kTotalTokens> drop = base;
++            drop[kBoardSize + kHandSize] = turn_token_for_color_id(mover_color);
++            drop[dst] = 0;
++            if (increment_hand(drop, mover_color, successor_piece)) {
++                try_add_draft(drafts, seen, drop, 1, -1, dst, successor_piece, -1, false);
++            }
++        }
++    }
++    return drafts;
++}
++
++}  // namespace
++
++extern "C" {
++
++int yaneuraou_returnable_init() {
++    Bitboards::init();
++    Position::init();
++    return 0;
++}
++
++int yaneuraou_returnable_mask(const int* predicted, const int* source, int batch, int use_light_checks, uint8_t* out) {
++    if (!predicted || !source || !out || batch <= 0) {
++        return -1;
++    }
++
++    for (int idx = 0; idx < batch; ++idx) {
++        const int* prev_tokens = predicted + idx * kTotalTokens;
++        const int* curr_tokens = source + idx * kTotalTokens;
++        out[idx] = 0;
++        if (find_returnable_move(prev_tokens, curr_tokens, use_light_checks != 0, nullptr)) {
++            out[idx] = 1;
++        }
++    }
++    return 0;
++}
++
++int yaneuraou_returnable_usi(
++    const int* predicted,
++    const int* source,
++    int batch,
++    int use_light_checks,
++    char* out,
++    int stride
++) {
++    if (!predicted || !source || !out || batch <= 0 || stride <= 0) {
++        return -1;
++    }
++    for (int idx = 0; idx < batch; ++idx) {
++        char* slot = out + idx * stride;
++        slot[0] = '\0';
++        std::string mv_usi;
++        if (find_returnable_move(
++                predicted + idx * kTotalTokens,
++                source + idx * kTotalTokens,
++                use_light_checks != 0,
++                &mv_usi
++            )) {
++            std::strncpy(slot, mv_usi.c_str(), static_cast<size_t>(stride - 1));
++            slot[stride - 1] = '\0';
++        }
++    }
++    return 0;
++}
++
++int yaneuraou_generate_predecessors(
++    const int* source,
++    int max_candidates,
++    int* out_tokens,
++    char* out_usi,
++    int usi_stride,
++    int* out_kind,
++    int* out_from,
++    int* out_to,
++    int* out_moved,
++    int* out_captured,
++    uint8_t* out_promoted,
++    int* out_count
++) {
++    if (!source || max_candidates <= 0 || !out_tokens || !out_usi || usi_stride <= 0 || !out_kind || !out_from
++        || !out_to || !out_moved || !out_captured || !out_promoted || !out_count) {
++        return -1;
++    }
++
++    std::vector<CandidateDraft> drafts = enumerate_predecessor_drafts(source);
++    int count = 0;
++    for (const CandidateDraft& draft : drafts) {
++        if (count >= max_candidates) {
++            return -2;
++        }
++        std::string move_usi;
++        if (!find_returnable_move(draft.tokens.data(), source, true, &move_usi)) {
++            continue;
++        }
++
++        int* token_slot = out_tokens + count * kTotalTokens;
++        for (int idx = 0; idx < kTotalTokens; ++idx) {
++            token_slot[idx] = draft.tokens[idx];
++        }
++
++        char* usi_slot = out_usi + count * usi_stride;
++        usi_slot[0] = '\0';
++        std::strncpy(usi_slot, move_usi.c_str(), static_cast<size_t>(usi_stride - 1));
++        usi_slot[usi_stride - 1] = '\0';
++
++        out_kind[count] = draft.kind;
++        out_from[count] = draft.from_square;
++        out_to[count] = draft.to_square;
++        out_moved[count] = draft.moved_piece;
++        out_captured[count] = draft.captured_piece;
++        out_promoted[count] = draft.promoted;
++        ++count;
++    }
++    *out_count = count;
++    return 0;
++}
++
++}  // extern "C"
+diff --git a/posdiffusion_types_min.cpp b/posdiffusion_types_min.cpp
+new file mode 100644
+index 00000000..69a40a04
+--- /dev/null
++++ b/posdiffusion_types_min.cpp
+@@ -0,0 +1,43 @@
++// Minimal type definitions needed for position/movegen.
++
++#include <cstdint>
++#include <ostream>
++#include <string>
++
++#include "source/types.h"
++
++namespace YaneuraOu {
++
++const char* USI_PIECE = ". P L N S B R G K +P+L+N+S+B+R+G+.p l n s b r g k +p+l+n+s+b+r+g+k";
++const std::string StartSFEN = "lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1";
++std::string PieceToCharBW(" PLNSBRGK        plnsbrgk");
++
++namespace Effect8 {
++Directions direc_table[SQ_NB_PLUS1][SQ_NB_PLUS1];
++}
++
++std::string to_usi_string(Move) { return ""; }
++std::string to_usi_string(Move16) { return ""; }
++std::string to_usi_string(RepetitionState) { return ""; }
++
++std::ostream& operator<<(std::ostream& os, Color c) {
++    os << static_cast<int>(c);
++    return os;
++}
++
++std::ostream& operator<<(std::ostream& os, Piece pc) {
++    os << static_cast<int>(pc);
++    return os;
++}
++
++std::ostream& operator<<(std::ostream& os, Hand hand) {
++    os << static_cast<uint32_t>(hand);
++    return os;
++}
++
++std::ostream& operator<<(std::ostream& os, RepetitionState rs) {
++    os << static_cast<int>(rs);
++    return os;
++}
++
++}  // namespace YaneuraOu
+diff --git a/posdiffusion_unit_test_min.cpp b/posdiffusion_unit_test_min.cpp
+new file mode 100644
+index 00000000..36ac4104
+--- /dev/null
++++ b/posdiffusion_unit_test_min.cpp
+@@ -0,0 +1,46 @@
++// Minimal UnitTester implementation for POSDIFFUSION_MINIMAL builds.
++
++#include "source/testcmd/unit_test.h"
++
++#include <sstream>
++
++namespace YaneuraOu {
++namespace Test {
++
++UnitTester::UnitTester() = default;
++
++UnitTester::~UnitTester() = default;
++
++void UnitTester::test(const std::string& /*message*/, bool /*b*/) {
++    ++test_count;
++}
++
++void UnitTester::run(std::function<void(UnitTester&, IEngine&)> f) {
++    if (before_run) {
++        before_run();
++    }
++    f(*this, *engine);
++    if (after_run) {
++        after_run();
++    }
++}
++
++const std::string UnitTester::section_name() {
++    std::stringstream ss;
++    ss << "[";
++    bool first = true;
++    for (const auto& section : sections) {
++        if (!first) {
++            ss << "::";
++        }
++        first = false;
++        ss << section;
++    }
++    ss << "]";
++    return ss.str();
++}
++
++void UnitTest(std::istringstream& /*is*/, IEngine& /*engine*/) {}
++
++}  // namespace Test
++}  // namespace YaneuraOu
+diff --git a/posdiffusion_usi_min.cpp b/posdiffusion_usi_min.cpp
+new file mode 100644
+index 00000000..44772f77
+--- /dev/null
++++ b/posdiffusion_usi_min.cpp
+@@ -0,0 +1,24 @@
++// Minimal USI helpers for POSDIFFUSION_MINIMAL builds.
++
++#include "source/usi.h"
++#include "source/evaluate.h"
++
++namespace YaneuraOu {
++
++int USIEngine::to_cp(Value v) {
++    return 100 * v / Eval::PawnValue;
++}
++
++Value USIEngine::cp_to_value(int v) {
++    return Value(Eval::PawnValue * v / 100);
++}
++
++Move16 USIEngine::to_move16(const std::string& /*str*/) {
++    return Move16::none();
++}
++
++Move USIEngine::to_move(const Position& /*pos*/, std::string /*str*/) {
++    return Move::none();
++}
++
++}  // namespace YaneuraOu
+diff --git a/source/bitboard.cpp b/source/bitboard.cpp
+index acff5475..da40c9b0 100644
+--- a/source/bitboard.cpp
++++ b/source/bitboard.cpp
+@@ -940,6 +940,7 @@ Bitboard directEffect(Square sq, Effect8::Direct d, const Bitboard& occupied)
+ 	}
+ }
+ 
++#if !defined(POSDIFFUSION_MINIMAL)
+ // UnitTest
+ void Bitboard::UnitTest(Test::UnitTester& tester, IEngine& engine)
+ {
+@@ -1154,4 +1155,6 @@ void Bitboard256::UnitTest(Test::UnitTester& tester, IEngine& engine)
+ 	}
+ }
+ 
++#endif
++
+ } // namespace YaneuraOu
+diff --git a/source/position.cpp b/source/position.cpp
+index 96a849c3..e15ca042 100644
+--- a/source/position.cpp
++++ b/source/position.cpp
+@@ -7,9 +7,11 @@
+ #include "misc.h"
+ #include "tt.h"
+ #include "mate/mate.h"
+-#include "book/book.h"
+ #include "movegen.h"
++#if !defined(POSDIFFUSION_MINIMAL)
++#include "book/book.h"
+ #include "testcmd/unit_test.h"
++#endif
+ 
+ #if defined(EVAL_KPPT) || defined(EVAL_KPP_KKPT) || defined(EVAL_NNUE)
+ #include "eval/evaluate_common.h"
+@@ -405,7 +407,6 @@ void Position::set_state() const {
+ #endif
+ }
+ 
+-
+ // Initializes the position object with the given FEN string.
+ // This function is not very robust - make sure that input FENs are correct,
+ // this is assumed to be the responsibility of the GUI.
+@@ -877,7 +878,6 @@ void Position::update_slider_blockers(Color c) const {
+     }
+ }
+ 
+-
+ // Computes a bitboard of all pieces which attack a given square.
+ // Slider attacks use the occupied bitboard to indicate occupancy.
+ 
+@@ -1575,7 +1575,6 @@ Move Position::to_move(Move16 m16) const
+ 	return Move(m.to_u16() + (u32(moved_piece) << 16));
+ }
+ 
+-
+ // ----------------------------------
+ //      局面を進める/戻す
+ // ----------------------------------
+@@ -3240,6 +3239,7 @@ bool Position::pos_is_ok() const
+ 	return true;
+ }
+ 
++#if !defined(POSDIFFUSION_MINIMAL)
+ // ----------------------------------
+ //			UnitTest
+ // ----------------------------------
+@@ -3685,9 +3685,9 @@ void Position::UnitTest(Test::UnitTester& tester, IEngine& engine) {
+           "lnsgk4/9/ppppppppp/9/9/9/PPPPPPPPP/9/LNSGK4 w GBRgbr",
+         };
+ 
+-        // packed by cshogi
++        // packed by the 96-token position encoding used by this project
+         /*
+-			board = cshogi.Board()
++			board = Board()
+ 			psfen = np.zeros(32, dtype=np.uint8)
+ 			board.set_sfen(sfen)
+ 			board.to_psfen(psfen)
+@@ -3928,6 +3928,7 @@ void Position::UnitTest(Test::UnitTester& tester, IEngine& engine) {
+     }
+ }
+ 
++#endif
+ 
+ // ----------------------------------
+ //         明示的な実体化
+@@ -3935,10 +3936,8 @@ void Position::UnitTest(Test::UnitTester& tester, IEngine& engine) {
+ template bool Position::pseudo_legal_s<false>(const Move m) const;
+ template bool Position::pseudo_legal_s< true>(const Move m) const;
+ 
+-template void Position::do_move(Move m, StateInfo& newSt, bool givesCheck, const TranspositionTable* tt);
+ template void Position::do_move(Move m, StateInfo& newSt, bool givesCheck, const void* tt);
+ 
+-template void Position::do_null_move(StateInfo& st, const TranspositionTable& tt);
+ template void Position::do_null_move(StateInfo& st, const int& tt);
+ 
+ } // namespace YaneuraOu

@@ -1,0 +1,33 @@
+# Python and tooling
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local configuration and credentials
+.env
+.env.*
+.vscode/
+.idea/
+*.log
+
+# Datasets, models, and generated results
+/data/
+work_dir/
+checkpoints/
+evaluation_results/
+outputs/
+*.onnx
+*.ckpt
+*.pt
+*.pth
+
+# Locally materialized GPLv3 dependency
+external/YaneuraOu/

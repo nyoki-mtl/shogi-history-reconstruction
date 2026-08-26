@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software or its artifacts, please cite the associated paper."
+title: "Shogi History Reconstruction"
+type: software
+authors:
+  - family-names: Taniai
+    given-names: Hiroki
+    affiliation: The University of Tokyo
+  - family-names: Irie
+    given-names: Hidetsugu
+    affiliation: The University of Tokyo
+version: 1.0.0
+date-released: 2026-08-26
+repository-code: "https://github.com/nyoki-mtl/shogi-history-reconstruction"
+license: MIT
+preferred-citation:
+  type: conference-paper
+  title: "Reconstructing Plausible Game Histories via Legal-Projected Reverse Generation: A Shogi Case Study"
+  authors:
+    - family-names: Taniai
+      given-names: Hiroki
+    - family-names: Irie
+      given-names: Hidetsugu
+  collection-title: "Proceedings of the 22nd AAAI Conference on Artificial Intelligence and Interactive Digital Entertainment"
+  year: 2026

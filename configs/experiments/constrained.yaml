@@ -1,0 +1,46 @@
+# Paper model: distance-1 denoising with piece-count and change-magnitude
+# constraints, change shaping, and no flip augmentation.
+
+experiment:
+  name: constrained
+  description: "Distance=1 denoising + piece/change constraints + change shaping, no flip."
+  tags: ["main", "distance1", "piece+change", "transformer_256_6", "reg"]
+
+loss:
+  type: constrained
+
+  # Distance statistics (P5-P95 token-change bounds, turn token excluded).
+  distance_stats:
+    1: { p05: 2.0, p95: 3.0 }
+    2: { p05: 4.0, p95: 5.0 }
+    3: { p05: 4.0, p95: 7.0 }
+    4: { p05: 5.0, p95: 9.0 }
+    5: { p05: 6.0, p95: 11.0 }
+    6: { p05: 6.0, p95: 13.0 }
+    7: { p05: 7.0, p95: 14.0 }
+    8: { p05: 8.0, p95: 16.0 }
+    9: { p05: 9.0, p95: 18.0 }
+
+  warmup_steps: 3000
+  lambda_max: 1
+  dual_lr: 0.001
+  piece_dual_lr: 0.00025
+
+  use_piece_constraint: true
+  use_change_constraint: true
+  lambda_piece_init: 0.1
+  lambda_change_init: 0.1
+  use_pcgrad: false
+
+  # Regularization to align training with argmax decoding at inference.
+  change_concentration_weight: 0.005 # concentrate change mass (avoid diffuse spread)
+  change_margin_weight: 0.005 # decisive flips at likely-change positions
+  change_margin_topk: 3 # mean target ~2.24 -> 3 avoids systematic undershoot
+  change_margin_m: 0.5 # logit margin
+  use_gumbel_change: false
+
+training:
+  batch_size: 512
+
+data:
+  augment: false

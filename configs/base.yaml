@@ -1,0 +1,127 @@
+# Base configuration — the single source of default values.
+#
+# Experiment files in configs/experiments/ are deep-merged on top of this file
+# by posdiffusion.config.load_config. Override only what differs per experiment.
+
+# --- General -----------------------------------------------------------------
+seed: 42
+device: cuda
+work_dir: work_dir
+experiment_name: null # set at runtime by scripts/train.py ({name}/{timestamp})
+checkpoint_dir: ${work_dir}/experiments/${experiment_name}/checkpoints
+
+experiment:
+  name: default
+  description: ""
+  tags: []
+
+# --- Model -------------------------------------------------------------------
+model:
+  vocab_size: 40 # 31 piece types + 9 hand counts
+  d_model: 256
+  n_layers: 6
+  n_heads: 8
+  d_ff: 1024 # feed-forward dimension (~4 * d_model)
+  dropout: 0.1
+  num_timesteps: 100 # diffusion timesteps
+  use_game_progress: false
+
+# --- Data --------------------------------------------------------------------
+data:
+  dataset_type: webdataset
+  train_shard_pattern: null
+  val_shard_pattern: null
+  test_shard_pattern: null
+  train_num_workers: 4
+  val_num_workers: 2
+  pin_memory: false
+  persistent_workers: true
+  augment: true
+  flip_prob: 0.5
+  shuffle_buffer_size: 100000
+
+# --- Distance schedule -------------------------------------------------------
+# The paper model uses distance=1 only.
+distance:
+  schedule:
+    num_steps: ${model.num_timesteps}
+    distances: [1]
+    weights: [1.0]
+    curriculum_schedule:
+      0: [1.0]
+  loss_weighting:
+    strategy: sqrt # none, sqrt, linear, min_snr
+    min_snr_gamma: 5.0
+
+# --- Loss --------------------------------------------------------------------
+loss:
+  type: denoising # denoising or constrained
+  label_smoothing: 0.0
+
+# --- Training ----------------------------------------------------------------
+training:
+  strategy: auto
+  max_epochs: 50
+  min_epochs: 1
+  devices: -1
+
+  learning_rate: 3e-4
+  beta1: 0.9
+  beta2: 0.999
+  weight_decay: 0.01
+  scheduler_type: cosine_with_warmup
+  warmup_steps: 5000
+  min_lr: 1e-6
+
+  gradient_clip_val: 1.0
+  gradient_clip_algorithm: norm
+  accumulate_grad_batches: 1
+  precision: "16-mixed"
+
+  limit_train_batches: 10000
+  limit_val_batches: null
+
+  log_every_n_steps: 100
+  val_check_interval: 1.0
+  check_val_every_n_epoch: 1
+
+  save_top_k: 3
+  save_final_model: true
+
+  progress_bar:
+    enabled: true
+
+  fast_dev_run: false
+  overfit_batches: 0.0
+  print_model_summary: true
+  run_test: false
+  deterministic: false
+  benchmark: true
+
+  batch_size: 256
+  apply_token_mask: false
+
+  # Optional returnable-check loss scaling
+  returnable_check: false
+  returnable_loss_weight: 0.5
+  returnable_sample_prob: 1.0
+  returnable_use_light_checks: true
+
+  validation_sync_dist: true
+
+# --- Logging -----------------------------------------------------------------
+log:
+  logger_type: wandb # wandb or tensorboard
+  project: shogi-history-reconstruction
+  entity: null
+  mode: online # online, offline, or disabled
+  save_dir: work_dir/logs/wandb
+  log_model: false
+  log_gradients: false
+  log_freq: 100
+  notes: "Shogi history reconstruction experiment"
+  watch_model: false
+  tags: null
+  group: null
+  run_name: null
+  run_id: null

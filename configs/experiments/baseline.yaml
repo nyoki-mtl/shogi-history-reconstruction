@@ -1,0 +1,16 @@
+# Baseline: distance=1, denoising loss only, small transformer (256/6).
+#
+# This is the unconstrained board-token denoising baseline referenced by the
+# legal-projection experiments. The model is re-used at inference as a token
+# likelihood scorer for legal predecessor candidates.
+
+experiment:
+  name: baseline
+  description: "Distance=1 denoising-only baseline (unconstrained token argmax)."
+  tags: ["baseline", "distance1", "denoise_only", "transformer_256_6"]
+
+loss:
+  type: denoising
+
+training:
+  batch_size: 512
