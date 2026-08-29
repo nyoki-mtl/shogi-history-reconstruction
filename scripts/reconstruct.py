@@ -11,9 +11,8 @@ import torch
 from rsshogi.core import Board
 
 from posdiffusion.board.tokenizer import ShogiTokenizer
-from posdiffusion.evaluation.policy.alphazero_onnx import AlphaZeroONNX
 from posdiffusion.inference import load_model, path_to_usi
-from posdiffusion.reverse.expansion import BLEND_MODE, ExpansionProvider, make_alphazero_policy_scorer
+from posdiffusion.reverse.expansion import ExpansionProvider
 from posdiffusion.reverse.search import iterative_widening_beam_rollback
 
 
@@ -28,16 +27,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-sfen", required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--alphazero-onnx", type=Path, required=True)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--candidate-backend", choices=["rsshogi", "yaneuraou", "yaneuraou_hybrid"], default="rsshogi")
     parser.add_argument("--max-steps", type=int, default=100)
     parser.add_argument("--budget", type=int, default=20000)
     parser.add_argument("--beam-widths", default="1,3,10,30,100,300")
     parser.add_argument("--per-state-topk", type=int, default=10)
-    parser.add_argument("--policy-alpha", type=float, default=1.0)
-    parser.add_argument("--policy-prefilter-k", type=int, default=15)
-    parser.add_argument("--policy-h-threshold", type=int, default=12)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
@@ -52,23 +47,18 @@ def main() -> None:
     target_tokens = tuple(tokenizer.encode(target_board))
 
     model = load_model(args.checkpoint, args.device)
-    policy = AlphaZeroONNX(args.alphazero_onnx, device="cpu")
     provider = ExpansionProvider(
         model=model,
         tokenizer=tokenizer,
         device=args.device,
         candidate_backend=args.candidate_backend,
         per_state_topk=args.per_state_topk,
-        policy_scorer=make_alphazero_policy_scorer(policy, tokenizer),
-        policy_alpha=args.policy_alpha,
-        policy_prefilter_k=args.policy_prefilter_k,
-        policy_h_threshold=args.policy_h_threshold,
         initial_tokens=initial_tokens,
     )
     result = iterative_widening_beam_rollback(
         start_tokens=target_tokens,
         initial_tokens=initial_tokens,
-        expand_fn=provider.expand_fn(BLEND_MODE),
+        expand_fn=provider.expand_fn("changed"),
         max_steps=args.max_steps,
         expansion_budget=args.budget,
         widths=parse_widths(args.beam_widths),
@@ -81,15 +71,13 @@ def main() -> None:
         "target_sfen": args.target_sfen,
         "generated_history_usi": history,
         "search": {
-            "score_mode": BLEND_MODE,
+            "score_mode": "changed",
             "candidate_backend": args.candidate_backend,
             "beam_widths": list(parse_widths(args.beam_widths)),
             "expansion_budget": args.budget,
             "expansions_used": result.expansions,
             "steps_to_initial": result.steps_to_initial,
-            "policy_alpha": args.policy_alpha,
-            "policy_prefilter_k": args.policy_prefilter_k,
-            "policy_h_threshold": args.policy_h_threshold,
+            "per_state_topk": args.per_state_topk,
         },
     }
     rendered = json.dumps(output, indent=2)

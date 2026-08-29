@@ -54,20 +54,17 @@ bash scripts/setup_yaneuraou.sh
 
 ## Reconstruct a history
 
-Download the released `final_model.ckpt` and the public
-[DL-Suisho policy/value network](https://drive.google.com/file/d/11e9-IhuUmZ68LaWE00m-_HFacsz8RgAX/view).
-Extract `DLSuisho15b/eval/model.onnx` from the downloaded archive, then run:
+Download the released `final_model.ckpt`, then run:
 
 ```bash
 uv run python scripts/reconstruct.py \
   --checkpoint final_model.ckpt \
-  --alphazero-onnx model.onnx \
   --target-sfen 'ln5nl/4rgg1k/p2p4s/1s3PP1p/2PPP1RP1/P1GB5/1PN2SN1P/1SK1G4/L7+b b 2Pl4p'
 ```
 
 These defaults reproduce the 80-move worked example with `rsshogi` candidate
-generation, changed-token denoiser scores blended with the DL-Suisho forward
-policy, widening beams `1,3,10,30,100,300`, and a 20,000 expansion budget.
+generation, changed-token denoiser scoring, widening beams
+`1,3,10,30,100,300`, and a 20,000 expansion budget.
 Search is deterministic for fixed model files and software versions.
 
 ## Train the model
