@@ -1,4 +1,4 @@
-# Base configuration — the single source of default values.
+# Default configuration values.
 #
 # Experiment files in configs/experiments/ are deep-merged on top of this file
 # by posdiffusion.config.load_config. Override only what differs per experiment.

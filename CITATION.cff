@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use this software or its artifacts, please cite the associated paper."
+message: "If you use this software or its artifacts, please cite the paper below."
 title: "Shogi History Reconstruction"
 type: software
 authors:
@@ -12,6 +12,7 @@ authors:
 version: 1.0.0
 date-released: 2026-08-26
 repository-code: "https://github.com/nyoki-mtl/shogi-history-reconstruction"
+url: "https://ojs.aaai.org/index.php/AIIDE/article/view/43597"
 license: MIT
 preferred-citation:
   type: conference-paper
@@ -19,7 +20,16 @@ preferred-citation:
   authors:
     - family-names: Taniai
       given-names: Hiroki
+      affiliation: The University of Tokyo
     - family-names: Irie
       given-names: Hidetsugu
-  collection-title: "Proceedings of the 22nd AAAI Conference on Artificial Intelligence and Interactive Digital Entertainment"
+      affiliation: The University of Tokyo
+  collection-title: "Proceedings of the AAAI Conference on Artificial Intelligence and Interactive Digital Entertainment"
+  volume: 22
+  issue: 1
+  start: 394
+  end: 402
   year: 2026
+  month: 11
+  doi: "10.1609/aiide.v22i1.43597"
+  url: "https://ojs.aaai.org/index.php/AIIDE/article/view/43597"

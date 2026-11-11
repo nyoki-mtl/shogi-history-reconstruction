@@ -1,11 +1,12 @@
 # Legal predecessor selection
 
-This package implements the legal-projected rollback stack:
+The rollback code is split across four modules:
 
 - `candidates.py`: enumerate and verify legal predecessor candidates.
 - `scoring.py`: score candidates from denoiser logits.
 - `expansion.py`: cache candidate generation and construct ranked expansions.
 - `search.py`: best-first and iterative widening beam rollback.
 
-Candidate generation is available through `rsshogi` and through the YaneuraOu
-library built by `scripts/setup_yaneuraou.sh`.
+`rsshogi` provides the default candidate backend. Run
+`scripts/setup_yaneuraou.sh` to build the YaneuraOu backend used in the paper's
+multi-step evaluation.
