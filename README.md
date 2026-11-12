@@ -6,7 +6,7 @@ Code and model weights for the AIIDE 2026 paper:
 Hiroki Taniai and Hidetsugu Irie (The University of Tokyo)<br>
 *Proceedings of the AAAI Conference on Artificial Intelligence and Interactive Digital Entertainment (AIIDE)*, Vol. 22, No. 1, pp. 394-402, 2026.
 
-[[Paper (AAAI OJS)]](https://ojs.aaai.org/index.php/AIIDE/article/view/43597) | [[PDF]](https://ojs.aaai.org/index.php/AIIDE/article/view/43597/51155) | [[DOI: 10.1609/aiide.v22i1.43597]](https://doi.org/10.1609/aiide.v22i1.43597) | [[Model Checkpoint (v1.0.0)]](https://github.com/nyoki-mtl/shogi-history-reconstruction/releases/tag/v1.0.0)
+[[Paper (AAAI OJS)]](https://ojs.aaai.org/index.php/AIIDE/article/view/43597) | [[PDF]](https://ojs.aaai.org/index.php/AIIDE/article/view/43597/51155) | [[DOI: 10.1609/aiide.v22i1.43597]](https://doi.org/10.1609/aiide.v22i1.43597) | [[Poster (PDF)]](docs/AIIDE26-poster.pdf) | [[Model Checkpoint (v1.0.0)]](https://github.com/nyoki-mtl/shogi-history-reconstruction/releases/tag/v1.0.0)
 
 ## Overview
 

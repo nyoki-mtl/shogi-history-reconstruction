@@ -1,10 +1,11 @@
 # Research Artifacts
 
-## Paper
+## Paper and poster
 
 - **Proceedings page**: <https://ojs.aaai.org/index.php/AIIDE/article/view/43597>
 - **PDF**: <https://ojs.aaai.org/index.php/AIIDE/article/view/43597/51155>
 - **DOI**: <https://doi.org/10.1609/aiide.v22i1.43597>
+- **Poster PDF**: [`docs/AIIDE26-poster.pdf`](docs/AIIDE26-poster.pdf)
 
 ## Model checkpoint (v1.0.0)
 
